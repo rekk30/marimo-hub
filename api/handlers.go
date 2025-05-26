@@ -8,6 +8,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/gofiber/fiber/v3"
 	"github.com/rekk30/marimo-hub/pkg/core"
+	"github.com/rs/zerolog/log"
 )
 
 var validate = validator.New()
@@ -42,12 +43,14 @@ func SetupAPIRoutes(app *fiber.App, reg core.Registry, runner *core.Runner) {
 	api.Post("/notebooks", postNotebook(reg))
 	api.Put("/notebooks/:id", putNotebook(reg))
 	api.Delete("/notebooks/:id", deleteNotebook(reg))
+	api.Post("/notebooks/:id/reload", reloadNotebook(reg, runner))
 }
 
 //--- Handlers ---//
 
 func getNotebook(reg core.Registry) fiber.Handler {
 	return func(c fiber.Ctx) error {
+		log.Debug().Str("IP", c.IP()).Str("method", "GET /notebooks/:id").Msg("Request received")
 		id := c.Params("id")
 		nb, exists := reg.Get(id)
 		if !exists {
@@ -59,6 +62,7 @@ func getNotebook(reg core.Registry) fiber.Handler {
 
 func getNotebookStatus(runner *core.Runner) fiber.Handler {
 	return func(c fiber.Ctx) error {
+		log.Debug().Str("IP", c.IP()).Msg("GET /notebooks/:id/status")
 		id := c.Params("id")
 		status, err := runner.GetStatus(id)
 		if err != nil {
@@ -70,6 +74,7 @@ func getNotebookStatus(runner *core.Runner) fiber.Handler {
 
 func getNotebooks(reg core.Registry) fiber.Handler {
 	return func(c fiber.Ctx) error {
+		log.Debug().Str("IP", c.IP()).Msg("GET /notebooks")
 		nbs := reg.List()
 		return c.JSON(core.NotebooksResponse{Notebooks: nbs})
 	}
@@ -77,7 +82,7 @@ func getNotebooks(reg core.Registry) fiber.Handler {
 
 func postNotebook(reg core.Registry) fiber.Handler {
 	return func(c fiber.Ctx) error {
-
+		log.Debug().Str("IP", c.IP()).Msg("POST /notebooks")
 		var req core.CreateUpdateNotebookRequest
 		if err := json.Unmarshal(c.Body(), &req); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(core.ErrorResponse{Error: "Invalid request"})
@@ -102,6 +107,7 @@ func postNotebook(reg core.Registry) fiber.Handler {
 
 func putNotebook(reg core.Registry) fiber.Handler {
 	return func(c fiber.Ctx) error {
+		log.Debug().Str("IP", c.IP()).Msg("PUT /notebooks/:id")
 		id := c.Params("id")
 		var req core.CreateUpdateNotebookRequest
 		if err := json.Unmarshal(c.Body(), &req); err != nil {
@@ -123,10 +129,27 @@ func putNotebook(reg core.Registry) fiber.Handler {
 
 func deleteNotebook(reg core.Registry) fiber.Handler {
 	return func(c fiber.Ctx) error {
+		log.Debug().Str("IP", c.IP()).Msg("DELETE /notebooks/:id")
 		id := c.Params("id")
 		if err := reg.Delete(id); err != nil {
 			return c.Status(fiber.StatusNotFound).JSON(core.ErrorResponse{Error: err.Error()})
 		}
+		return c.SendStatus(fiber.StatusNoContent)
+	}
+}
+
+func reloadNotebook(reg core.Registry, runner *core.Runner) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		log.Debug().Str("IP", c.IP()).Msg("POST /notebooks/:id/reload")
+		id := c.Params("id")
+
+		nb, exists := reg.Get(id)
+		if !exists {
+			return c.Status(fiber.StatusNotFound).JSON(core.ErrorResponse{Error: "Notebook not found"})
+		}
+
+		runner.HandleRegistryEvent(nb, core.ActionUpdate)
+
 		return c.SendStatus(fiber.StatusNoContent)
 	}
 }

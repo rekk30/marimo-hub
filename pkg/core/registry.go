@@ -43,20 +43,17 @@ func (r *BadgerRegistry) Close() error {
 }
 
 func (r *BadgerRegistry) Add(req CreateUpdateNotebookRequest) (Notebook, error) {
-	log.Debug().Str("method", "Add").Str("domain", req.Domain).Msg("Starting Add operation")
+	log.Debug().Str("method", "BadgerRegistry.Add").
+		Interface("request", req).Msg("Starting Add operation")
 
 	if req.Name == "" || req.Path == "" || req.Domain == "" {
-		log.Warn().Interface("request", req).Msg("Missing required fields")
 		return Notebook{}, fmt.Errorf("name, path, and domain are required for creation")
 	}
 
-	log.Debug().Str("domain", req.Domain).Msg("Checking if domain exists")
 	if _, exists := r.GetByDomain(req.Domain); exists {
-		log.Warn().Str("domain", req.Domain).Msg("Domain already in use")
 		return Notebook{}, fmt.Errorf("domain %s is already in use", req.Domain)
 	}
 
-	log.Debug().Msg("Creating new notebook")
 	nb := Notebook{
 		ID:        uuid.New().String(),
 		Name:      req.Name,
@@ -71,7 +68,6 @@ func (r *BadgerRegistry) Add(req CreateUpdateNotebookRequest) (Notebook, error) 
 		return Notebook{}, fmt.Errorf("domain %s is already in use", req.Domain)
 	}
 
-	log.Debug().Str("id", nb.ID).Msg("Storing notebook")
 	if err := r.storeNotebook(nb); err != nil {
 		log.Error().Err(err).Str("id", nb.ID).Msg("Failed to store notebook")
 		return Notebook{}, err
@@ -80,7 +76,9 @@ func (r *BadgerRegistry) Add(req CreateUpdateNotebookRequest) (Notebook, error) 
 	log.Debug().Str("id", nb.ID).Msg("Notifying subscribers")
 	r.notifySubscribers(nb, ActionAdd)
 
-	log.Info().Str("id", nb.ID).Str("domain", nb.Domain).Msg("Successfully added notebook")
+	log.Info().Str("id", nb.ID).Str("domain", nb.Domain).
+		Str("method", "BadgerRegistry.Add").
+		Msg("Successfully added notebook")
 	return nb, nil
 }
 
@@ -89,6 +87,8 @@ func (r *BadgerRegistry) Get(id string) (Notebook, bool) {
 }
 
 func (r *BadgerRegistry) GetByDomain(domain string) (Notebook, bool) {
+	log.Debug().Str("method", "BadgerRegistry.GetByDomain").
+		Str("domain", domain).Msg("Starting GetByDomain operation")
 	var result Notebook
 	var found bool
 
@@ -104,6 +104,9 @@ func (r *BadgerRegistry) GetByDomain(domain string) (Notebook, bool) {
 			if err := item.Value(func(val []byte) error {
 				return json.Unmarshal(val, &nb)
 			}); err != nil {
+				log.Warn().Err(err).
+					Str("method", "BadgerRegistry.GetByDomain").
+					Msg("Failed to unmarshal notebook")
 				continue
 			}
 
@@ -113,10 +116,14 @@ func (r *BadgerRegistry) GetByDomain(domain string) (Notebook, bool) {
 				return nil
 			}
 		}
+		log.Debug().Str("method", "BadgerRegistry.GetByDomain").
+			Str("domain", domain).Msg("No notebook found")
 		return nil
 	})
 
 	if err != nil {
+		log.Error().Err(err).Str("method", "BadgerRegistry.GetByDomain").
+			Str("domain", domain).Msg("Failed to get notebook by domain")
 		return Notebook{}, false
 	}
 	return result, found
@@ -138,16 +145,21 @@ func (r *BadgerRegistry) List() []Notebook {
 			})
 			if err == nil {
 				notebooks = append(notebooks, nb)
+			} else {
+				log.Warn().Err(err).Str("method", "BadgerRegistry.List").Msg("Failed to unmarshal notebook")
 			}
-			// Optionally log error if item unmarshalling fails
 		}
 		return nil
 	})
+	log.Debug().Str("method", "BadgerRegistry.List").Int("count", len(notebooks)).Msg("Successfully listed notebooks")
 	return notebooks
 }
 
 func (r *BadgerRegistry) Update(id string, req CreateUpdateNotebookRequest) (Notebook, error) {
-	log.Debug().Str("method", "Update").Str("id", id).Msg("Starting Update operation")
+	log.Debug().Str("method", "BadgerRegistry.Update").
+		Str("id", id).
+		Interface("req", req).
+		Msg("Starting Update operation")
 
 	if req.Domain != "" {
 		if existing, exists := r.GetByDomain(req.Domain); exists && existing.ID != id {
@@ -185,26 +197,23 @@ func (r *BadgerRegistry) Update(id string, req CreateUpdateNotebookRequest) (Not
 	}
 
 	if !updated {
-		log.Debug().Str("id", id).Msg("No changes to update")
+		log.Debug().Str("method", "BadgerRegistry.Update").
+			Str("id", id).
+			Msg("No changes to update")
 		return nb, nil
 	}
 
-	log.Debug().Msg("Acquiring write lock for final domain check and storage")
-
 	if req.Domain != "" && req.Domain != nb.Domain {
 		if existing, exists := r.getNotebookByDomain(req.Domain); exists && existing.ID != id {
-			log.Warn().Str("domain", req.Domain).Msg("Domain became in use after lock acquisition")
 			return Notebook{}, fmt.Errorf("domain %s is already in use", req.Domain)
 		}
 	}
 
-	log.Debug().Str("id", id).Msg("Storing updated notebook")
 	if err := r.storeNotebook(nb); err != nil {
-		log.Error().Err(err).Str("id", id).Msg("Failed to store updated notebook")
 		return Notebook{}, err
 	}
 
-	log.Debug().Str("id", id).Msg("Notifying subscribers")
+	log.Debug().Str("method", "BadgerRegistry.Update").Str("id", id).Msg("Notifying subscribers")
 	r.notifySubscribers(nb, ActionUpdate)
 
 	log.Info().Str("id", id).Str("domain", nb.Domain).Msg("Successfully updated notebook")
@@ -212,19 +221,15 @@ func (r *BadgerRegistry) Update(id string, req CreateUpdateNotebookRequest) (Not
 }
 
 func (r *BadgerRegistry) Delete(id string) error {
-	log.Debug().Str("method", "Delete").Str("id", id).Msg("Starting Delete operation")
+	log.Debug().Str("method", "BadgerRegistry.Delete").Str("id", id).Msg("Starting Delete operation")
 
 	nb, exists := r.getNotebook(id)
 
 	if !exists {
-		log.Warn().Str("id", id).Msg("Notebook not found")
 		return fmt.Errorf("notebook %s not found", id)
 	}
 
-	log.Debug().Msg("Acquiring write lock for deletion")
-
 	if _, exists := r.getNotebook(id); !exists {
-		log.Warn().Str("id", id).Msg("Notebook was deleted concurrently")
 		return fmt.Errorf("notebook %s was deleted concurrently", id)
 	}
 
@@ -237,7 +242,7 @@ func (r *BadgerRegistry) Delete(id string) error {
 		return err
 	}
 
-	log.Debug().Str("id", id).Msg("Notifying subscribers")
+	log.Debug().Str("method", "BadgerRegistry.Delete").Str("id", id).Msg("Notifying subscribers")
 	r.notifySubscribers(nb, ActionDelete)
 
 	log.Info().Str("id", id).Str("domain", nb.Domain).Msg("Successfully deleted notebook")
@@ -258,7 +263,9 @@ func (r *BadgerRegistry) loadExistingNotebooks() error {
 				return json.Unmarshal(val, &nb)
 			})
 			if err != nil {
-				// Optionally log the error and skip to the next notebook
+				log.Warn().Err(err).
+					Str("method", "BadgerRegistry.loadExistingNotebooks").
+					Msg("Failed to unmarshal notebook")
 				continue
 			}
 			log.Debug().Str("id", nb.ID).Msg("Notifying subscribers for loaded notebook")
@@ -281,14 +288,24 @@ func (r *BadgerRegistry) getNotebook(id string) (Notebook, bool) {
 	})
 
 	if err != nil {
+		log.Warn().Err(err).
+			Str("method", "BadgerRegistry.getNotebook").
+			Str("id", id).
+			Msg("Failed to get notebook")
 		return Notebook{}, false
 	}
 	return nb, true
 }
 
 func (r *BadgerRegistry) storeNotebook(nb Notebook) error {
+	log.Debug().Str("method", "BadgerRegistry.storeNotebook").
+		Interface("notebook", nb).Msg("Storing notebook")
 	data, err := json.Marshal(nb)
 	if err != nil {
+		log.Warn().Err(err).
+			Str("method", "BadgerRegistry.storeNotebook").
+			Str("id", nb.ID).
+			Msg("Failed to marshal notebook")
 		return err
 	}
 
@@ -298,13 +315,20 @@ func (r *BadgerRegistry) storeNotebook(nb Notebook) error {
 }
 
 func (r *BadgerRegistry) notifySubscribers(nb Notebook, action RegistryAction) {
+	log.Debug().Str("method", "BadgerRegistry.notifySubscribers").
+		Interface("notebook", nb).
+		Interface("action", action).
+		Int("subscribers", len(r.subs)).
+		Msg("Notifying subscribers")
 	for _, handler := range r.subs {
-		// Run handlers in goroutines to prevent blocking the registry
 		go handler(nb, action)
 	}
 }
 
 func (r *BadgerRegistry) getNotebookByDomain(domain string) (Notebook, bool) {
+	log.Debug().Str("method", "BadgerRegistry.getNotebookByDomain").
+		Str("domain", domain).
+		Msg("Starting getNotebookByDomain operation")
 	var result Notebook
 	var found bool
 
@@ -320,6 +344,9 @@ func (r *BadgerRegistry) getNotebookByDomain(domain string) (Notebook, bool) {
 			if err := item.Value(func(val []byte) error {
 				return json.Unmarshal(val, &nb)
 			}); err != nil {
+				log.Warn().Err(err).
+					Str("method", "BadgerRegistry.getNotebookByDomain").
+					Msg("Failed to unmarshal notebook")
 				continue
 			}
 
@@ -329,6 +356,9 @@ func (r *BadgerRegistry) getNotebookByDomain(domain string) (Notebook, bool) {
 				return nil
 			}
 		}
+		log.Debug().Str("method", "BadgerRegistry.getNotebookByDomain").
+			Str("domain", domain).
+			Msg("No notebook found")
 		return nil
 	})
 
